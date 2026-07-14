@@ -23,6 +23,17 @@ a Gamma-shaped CSV export (conditionId/category/createdAt/closedTime/closed/
 outcomes/outcomePrices/volumeNum columns, i.e. what you'd get by dumping Gamma API
 JSON responses to CSV) rather than the incompatible third-party schema. It shares
 its outcome-classification logic with `load_from_gamma` via `_classify_outcome`.
+
+Resolution-truth rule (tightened in review round 1, see task-11-report.md "Fix
+round 1"): Gamma exposes no usable authoritative settlement field for this
+study's purposes -- `umaResolutionStatuses` exists but is empty for ~81% of
+markets closed more than a year ago (checked live), which is most of the
+history this backtest needs, so requiring it would gut the sample far worse
+than any price threshold. Instead, `_classify_outcome` requires one side's
+outcomePrices to be >=0.999 (RESOLVED_PRICE_THRESHOLD, see its own comment for
+the live-sample evidence); anything short of that -- including the degenerate
+near-["0","0"]/near-0.5-0.5 void-market cluster -- is excluded as
+`bad_outcome`. Identical rule on both `load_from_gamma` and `load_dataset_csv`.
 """
 from __future__ import annotations
 import json
@@ -30,15 +41,49 @@ import pandas as pd
 from data.schema import MarketRecord, Exclusion
 from data.api_client import PolymarketClient
 
+# --- Task 11 review round 1: threshold tightened 0.9 -> 0.999, evidence below ---
+#
+# Investigated whether Gamma exposes an authoritative settlement-truth field
+# instead of relying on outcomePrices at all. Live `GET /markets?closed=true`
+# responses do carry `umaResolutionStatuses` (a JSON-string-encoded history like
+# '["proposed","resolved"]' or '["proposed","disputed","proposed"]' -- values
+# seen: proposed / disputed / resolved). No `umaResolutionStatus` (singular),
+# `resolvedBy`, or `hasResolutionData` field exists anywhere in the ~70-key
+# market object (checked via a live full-object dump).
+#
+# That field is NOT usable as a required gate for this study: sampled 837 real
+# closed markets spanning 2020-2026 and bucketed by age at query time --
+# markets closed <365 days ago were 100% populated (216/216), but markets
+# closed >365 days ago were only 18.9% populated (101/535); the rest returned
+# `[]`. A favourite-bias backtest needs multi-year history, and >365-day-old
+# markets are the bulk of that history, so requiring umaResolutionStatuses ==
+# "resolved" would silently drop ~81% of an otherwise-usable historical sample
+# -- far worse than any price-threshold tightening below. (Separately, prices
+# already snap to their near-final value the moment a market closes, before
+# umaResolutionStatuses ever reaches "resolved" -- e.g. a market closed same-day
+# already showed exact outcomePrices=["1","0"] while still `["proposed"]` -- so
+# even where present, the field doesn't add confidence beyond what the price
+# itself already encodes for markets old enough to matter here.) Conclusion:
+# treat the field as not reliably usable for this study and tighten the price
+# rule instead, sharing the tightened rule across both loader paths.
+#
 # A resolved binary market's winning outcomePrices entry is almost never exactly
 # "1" in real Gamma data (string/float encoding noise from the AMM/UMA settlement
-# pipeline). Live sample of 206 real binary closed markets: 0 hit exactly 1.0, but
-# 173 were >=0.999 and the rest of the genuinely-resolved ones ranged down to
-# ~0.897. Separately, some closed markets are degenerate/void with prices near
-# ["0","0"] or ~0.50/0.50 (never resolved to either side) -- 28 such cases seen in
-# the same sample, cleanly separated from the resolved cluster (max gap: 0.50 to
-# 0.897). 0.9 sits in that gap, so it's used as the "this side won" threshold.
-RESOLVED_PRICE_THRESHOLD = 0.9
+# pipeline), though markets closed within roughly the last year commonly do show
+# a clean "1"/"0". Re-ran the live-sample investigation at n=1,465 binary closed
+# markets (offsets 0-2,950, spanning 2020-2026 -- 7x the original n=206 sample):
+# 1,433 resolved one-sided under the old >=0.9 rule, of which 1,407 (98.2%) were
+# already >=0.999; only 26 (1.8%) sit in [0.9, 0.999) and are newly excluded by
+# this tightening (down from the original ~16%-loss estimate, which was based on
+# a much smaller and evidently less representative sample). Degenerate/void
+# markets (never resolved to either side, e.g. outcomePrices near ["0","0"] or
+# ~0.50/0.50) topped out at 0.897 in the same sample -- still a clean gap below
+# 0.9, so nothing in that cluster is newly misclassified as resolved by raising
+# the bar to 0.999. Net trade-off: ~1.8% additional sample loss for meaningfully
+# tighter label purity on the remaining markets, given no authoritative field is
+# available to corroborate price instead. See task-11-report.md ("Fix round 1")
+# for the raw JSON evidence.
+RESOLVED_PRICE_THRESHOLD = 0.999
 
 COLUMN_MAP = {
     # ours -> Gamma field/CSV-export column names. (Not the third-party dataset's
