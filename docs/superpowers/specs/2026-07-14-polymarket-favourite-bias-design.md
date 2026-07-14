@@ -20,7 +20,7 @@ This project follows the same rigor bar as the sibling project `Trading-Strategy
 - **Markets:** resolved, binary Yes/No PolyMarket markets only, above a liquidity/volume floor calibrated empirically once the data is in hand (target: land in the thousands-of-markets range — research confirmed a "Standard Binary + liquidity" filter yields a sample this size).
 - **Category** (politics, sports, crypto, etc.) is a *breakdown dimension* in the results, not a filter — the full binary-market sample stays intact so category-level patterns can be reported without shrinking the core sample.
 - **Favourite definition:** whichever side (YES or NO) has implied probability > 50% at the snapshot time.
-- **Snapshot timing:** price sampled in the window 24–48 hours before market resolution (nearest available candle) — the closest a backtest can get to "a bet you could realistically have placed" while avoiding most late-window "the outcome is now obvious" leakage.
+- **Snapshot timing:** price sampled in the window 24–48 hours before market resolution — the closest a backtest can get to "a bet you could realistically have placed" while avoiding most late-window "the outcome is now obvious" leakage. **Candle selection rule (deterministic):** take the latest available candle that is still ≥24h before resolution (the freshest price still outside the excluded final-24h zone), as long as it is ≤48h before resolution. If no candle exists in that band, the market is excluded (see §9).
 - **Bet sizing:** flat $1 stake per market. This isolates whether the favourite-selection rule itself has edge, before any bankroll-management layer (Kelly, liquidity-aware sizing) gets added — those are explicitly out of scope for v1.
 
 ## 4. Data Sourcing (hybrid)
@@ -65,7 +65,7 @@ polymarket-favourite-bias/
 ## 9. Error Handling
 
 Nothing is silently dropped — every exclusion is logged with a reason so the final sample size is fully accounted for in the writeup:
-- No price data inside the 24–48h window (e.g. market resolved too fast) → excluded, reason logged.
+- No candle satisfies the §3 candle-selection rule (e.g. market resolved too fast to have any snapshot ≥24h before resolution) → excluded, reason logged.
 - Dataset-vs-live-API disagreement above a sanity threshold on the cross-validated sample → flagged as a data-quality blocker before trusting the full backtest; the agreement % is reported in the writeup regardless of outcome.
 - A market at ~50/50 at snapshot (no real favourite) → included, not excluded (excluding it would bias the favourite definition), but callable out as a diagnostic slice.
 
