@@ -4,3 +4,4 @@ cache/
 results/*
 !results/.gitkeep
 *.egg-info/
+dataset_tmp/
