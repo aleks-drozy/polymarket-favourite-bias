@@ -145,6 +145,10 @@ GAMMA_BAD_OUTCOME = {
 # Real market (conditionId 0xa9096ff...): category is genuinely null on this
 # live closed market ("Games Total: O/U 2.5"), which is a real, recurring
 # Gamma pattern (also seen on real open markets during this investigation).
+# Its outcomes are also non-binary (Over/Under) -- so under Task 13's fix
+# (null category no longer excludes on its own, see
+# data/dataset_loader.py's "Task 13 real-API discovery" note), this record
+# still ends up excluded, but for "not_binary", not "missing_field:category".
 GAMMA_MISSING_FIELD = {
     "conditionId": "0xa9096ff7e25f808b537e7f95e4d6b690c88f7dc4a49cf01c05ff13e9b401468a",
     "category": None,
@@ -154,6 +158,37 @@ GAMMA_MISSING_FIELD = {
     "outcomes": '["Over", "Under"]',
     "outcomePrices": '["0", "1"]',
     "volumeNum": 99.99999999999999,
+}
+
+# Real market (conditionId 0xdd22472e...): Polymarket's highest-volume market
+# ever ($1.53B), the 2024 US Presidential Election winner market. category is
+# null here too -- Task 13's live investigation found this is universal for
+# the entire CLOB-covered era (2022-09 onward), not an isolated data-quality
+# blip: the flat `category` field simply stopped being populated Gamma-side.
+# Clean binary Yes/No, cleanly resolved -- isolates the "null category alone
+# must not exclude" behavior from any other exclusion reason.
+GAMMA_NULL_CATEGORY_VALID = {
+    "conditionId": "0xdd22472e552920b8438158ea7238bfadfa4f736aa4cee91a6b86c39ead110917",
+    "category": None,
+    "createdAt": "2024-01-04T17:33:51.332Z",
+    "closedTime": "2024-11-06 15:17:41+00",
+    "closed": True,
+    "outcomes": '["Yes", "No"]',
+    "outcomePrices": '["1", "0"]',
+    "volumeNum": 1531479284.504353,
+}
+
+# Synthetic: a genuinely-missing *other* required field (volumeNum absent)
+# must still exclude -- confirms the category exemption in the required-field
+# loop didn't accidentally weaken the check for every other column.
+GAMMA_MISSING_VOLUME = {
+    "conditionId": "0xtest_missing_volume",
+    "category": "Politics",
+    "createdAt": "2023-01-01T00:00:00Z",
+    "closedTime": "2023-02-01 00:00:00+00",
+    "closed": True,
+    "outcomes": '["Yes", "No"]',
+    "outcomePrices": '["1", "0"]',
 }
 
 
@@ -184,25 +219,56 @@ def test_gamma_to_record_bad_outcome():
 
 
 def test_gamma_to_record_missing_field():
+    # Category-nullness no longer excludes on its own (Task 13 fix); this
+    # fixture's outcomes are Over/Under, so it now falls through to
+    # not_binary instead of missing_field:category.
     r = _gamma_to_record(GAMMA_MISSING_FIELD)
     assert isinstance(r, Exclusion)
-    assert r.reason == "missing_field:category"
+    assert r.reason == "not_binary"
+
+
+def test_gamma_to_record_null_category_defaults_to_unknown_not_excluded():
+    r = _gamma_to_record(GAMMA_NULL_CATEGORY_VALID)
+    assert isinstance(r, MarketRecord)
+    assert r.category == "unknown"
+    assert r.resolved_outcome == "YES"
+
+
+def test_gamma_to_record_missing_non_category_field_still_excludes():
+    r = _gamma_to_record(GAMMA_MISSING_VOLUME)
+    assert isinstance(r, Exclusion)
+    assert r.reason == "missing_field:volume"
+
+
+def test_gamma_to_record_strips_whitespace_from_category():
+    # Real Gamma data includes trailing-space category values (e.g.
+    # "Pop-Culture ", verified live) that would otherwise miss a clean
+    # fees.py CATEGORY_RATES key match even when one exists.
+    m = dict(GAMMA_VALID_RESOLVED, category="Politics ")
+    r = _gamma_to_record(m)
+    assert isinstance(r, MarketRecord)
+    assert r.category == "politics"
 
 
 class _StubClient:
-    """Serves pre-built pages in order, then an empty page to signal the end.
-    No network access -- `fetch_markets_page` is the only method load_from_gamma
-    calls on the client."""
+    """Serves pre-built pages via keyset (cursor) pagination -- each call's
+    incoming cursor is the `next_cursor` the previous call returned, and the
+    stub returns next_cursor=None once its pages are exhausted, mirroring live
+    Gamma keyset semantics (see PolymarketClient.fetch_markets_keyset). No
+    network access -- `fetch_markets_keyset` is the only method
+    load_from_gamma calls on the client."""
 
     def __init__(self, pages: list[list[dict]]):
         self._pages = list(pages)
         self.calls = []
 
-    def fetch_markets_page(self, offset: int, limit: int = 100):
-        self.calls.append(offset)
+    def fetch_markets_keyset(self, cursor=None, limit: int = 100):
+        self.calls.append(cursor)
         if not self._pages:
-            return []
-        return self._pages.pop(0)
+            return [], None
+        page = self._pages.pop(0)
+        next_cursor = f"cursor{len(self.calls)}" if self._pages else None
+        return page, next_cursor
 
 
 def test_load_from_gamma_paginates_and_classifies_with_stub_client():
@@ -216,10 +282,13 @@ def test_load_from_gamma_paginates_and_classifies_with_stub_client():
     assert len(records) == 1
     assert records[0].resolved_outcome == "NO"
     reasons = sorted(e.reason for e in exclusions)
-    assert reasons == ["bad_outcome", "missing_field:category", "not_binary", "not_resolved"]
-    # offsets advance by page size: 0, then 2 (len of first page), then 5
-    # (2 + 3, len of second page) for the final empty-page call that stops the loop
-    assert client.calls == [0, 2, 5]
+    # GAMMA_MISSING_FIELD now excludes as "not_binary" (its Over/Under
+    # outcomes), not "missing_field:category" -- null category alone no
+    # longer excludes (Task 13 fix, see data/dataset_loader.py).
+    assert reasons == ["bad_outcome", "not_binary", "not_binary", "not_resolved"]
+    # cursor threaded through: None (page 1), then "cursor1" (page 2, whose
+    # next_cursor is None -- pages exhausted -- so the loop stops there)
+    assert client.calls == [None, "cursor1"]
 
 
 def test_load_from_gamma_stops_on_empty_page():
@@ -227,5 +296,7 @@ def test_load_from_gamma_stops_on_empty_page():
     records, exclusions = load_from_gamma(client)
     assert len(records) == 1
     assert exclusions == []
-    # second call returns [] (no more pages) and the loop stops
-    assert client.calls == [0, 1]
+    # single page whose own next_cursor is None -- one call suffices, no
+    # wasted extra call to discover the end (an efficiency improvement over
+    # the old offset-based always-one-more-call pattern)
+    assert client.calls == [None]

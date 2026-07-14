@@ -40,6 +40,28 @@ class PolymarketClient:
     def fetch_markets_page(self, offset: int, limit: int = 100) -> list[dict]:
         return self._get(f"{GAMMA}/markets?closed=true&limit={limit}&offset={offset}")
 
+    def fetch_markets_keyset(self, cursor: str | None = None, limit: int = 100
+                             ) -> tuple[list[dict], str | None]:
+        # NOTE (Task 13, live-verified): `fetch_markets_page`'s plain offset
+        # pagination hard-caps around offset~2000 -- HTTP 422
+        # {"error":"offset too large, use /markets/keyset for deeper
+        # pagination"} starting somewhere in [2000, 2031] (binary-searched
+        # live). That's nowhere near enough historical depth for this study
+        # (see data/dataset_loader.py's "Task 13 real-API discovery" note for why deep
+        # pagination matters here), so load_from_gamma uses this instead.
+        # The request param is `after_cursor` -- found via the live
+        # /openapi.json spec; the response's own cursor field is named
+        # `next_cursor`, a different name than what you send back, which is
+        # easy to get wrong (a bare `next_cursor=...` request param is
+        # silently ignored and just re-serves page 1). Server also silently
+        # caps `limit` at 100 regardless of the requested value (verified
+        # live with limit=500 -> got 100 back), same as fetch_markets_page.
+        url = f"{GAMMA}/markets/keyset?closed=true&limit={limit}"
+        if cursor:
+            url += f"&after_cursor={cursor}"
+        payload = self._get(url)
+        return payload.get("markets") or [], payload.get("next_cursor")
+
     def get_price_history(self, clob_token_id: str, start_ts: int, end_ts: int) -> list[Candle]:
         payload = self._get(
             f"{CLOB}/prices-history?market={clob_token_id}"

@@ -24,6 +24,8 @@ def client(tmp_path, monkeypatch):
         calls.append(url)
         if "prices-history" in url:
             return FakeResponse(json.loads((FIX / "prices_history.json").read_text()))
+        if "keyset" in url:
+            return FakeResponse(json.loads((FIX / "gamma_market_keyset.json").read_text()))
         return FakeResponse(json.loads((FIX / "gamma_market.json").read_text()))
 
     monkeypatch.setattr("data.api_client.requests.get", fake_get)
@@ -41,6 +43,17 @@ def test_get_market_returns_first(client):
     assert m["conditionId"] == "0xabc"
 
 
+def test_fetch_markets_keyset_returns_markets_and_cursor(client):
+    markets, next_cursor = client.fetch_markets_keyset()
+    assert len(markets) == 1 and markets[0]["conditionId"] == "0xabc"
+    assert next_cursor == "abc123"
+
+
+def test_fetch_markets_keyset_sends_after_cursor_param(client):
+    client.fetch_markets_keyset(cursor="prevcursor")
+    assert any("after_cursor=prevcursor" in u for u in client._calls)
+
+
 def test_cache_prevents_second_network_call(client):
     client.get_price_history("111", 1699000000, 1700000000)
     client.get_price_history("111", 1699000000, 1700000000)
@@ -53,3 +66,17 @@ def test_live_smoke_known_market():
     c = PolymarketClient(cache_dir="cache")
     page = c.fetch_markets_page(offset=0, limit=5)
     assert isinstance(page, list) and len(page) > 0
+
+
+@pytest.mark.network
+def test_live_keyset_pagination_advances():
+    # Offset pagination hard-caps around offset~2000 (verified live, Task 13)
+    # -- this confirms the keyset cursor mechanism actually advances instead
+    # of re-serving the same page (an easy mistake: passing back the wrong
+    # param name silently no-ops and just returns page 1 again).
+    c = PolymarketClient(cache_dir="cache")
+    page1, cursor1 = c.fetch_markets_keyset(limit=5)
+    assert len(page1) > 0 and cursor1
+    page2, _ = c.fetch_markets_keyset(cursor=cursor1, limit=5)
+    assert len(page2) > 0
+    assert {m["conditionId"] for m in page1}.isdisjoint({m["conditionId"] for m in page2})

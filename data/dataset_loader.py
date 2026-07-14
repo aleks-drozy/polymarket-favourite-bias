@@ -85,6 +85,58 @@ from data.api_client import PolymarketClient
 # for the raw JSON evidence.
 RESOLVED_PRICE_THRESHOLD = 0.999
 
+# --- Task 13 real-API discovery: `category` is null for essentially the ENTIRE
+# CLOB-covered era -- treating it as a required field would exclude 100% of
+# markets that could ever produce a bet ---
+#
+# Live investigation (ascending `GET /markets/keyset?closed=true`, walked
+# ~6,000 markets from 2020-10-02 onward): `category` is populated for markets
+# CREATED 2020-10-02 through ~2022-08 (86/100 populated in the last
+# transitional page sampled, createdAt range 2022-07-29 -> 2022-09-08), then
+# drops to 0/100 populated in every page checked from 2022-09 through 2023-03,
+# and stays null for the highest-volume markets ever traded on Polymarket
+# (spot-checked the top 20 by volume, including the 2024 election market at
+# $1.53B volume, conditionId 0xdd22472e... -- category=None) and for the most
+# recently closed markets as of this run (checked live). No replacement
+# top-level field exists on `/markets` or `/markets/keyset`: `tags` is also
+# null unless the separate `include_tag=true` param is passed, which returns a
+# large, granular per-topic tag list (e.g. 'hillary clinton', 'us elections',
+# 'Politics', 'Trump' all attached to the same market) -- not a clean 1:1
+# category replacement, and reconstructing one is out of scope here (YAGNI).
+#
+# Separately: CLOB `/prices-history` returns ZERO candles for every market
+# spot-checked from the category-populated era (8 markets checked across
+# 2020-10 to 2022-08, using this project's exact snapshot-window query), but
+# returns real candles for CLOB-era markets (verified against the same 2024
+# election market above, using the exact 24-48h-before-resolution window this
+# project queries). These two eras do not overlap: markets old enough to carry
+# a `category` value predate Polymarket's CLOB and have no CLOB price history
+# at all; every CLOB-covered market (2022-09 onward) has category=None.
+#
+# category is only ever used for the fee-rate lookup (backtest/fees.py) and
+# the results-config category histogram (Task 13's ledger watch item from
+# Task 9/11) -- it plays no role in outcome classification, resolution-truth,
+# or market identity. So the fix is the smallest one that keeps the study
+# runnable: null/missing/blank category defaults to "unknown" (a value
+# already used as a fallback elsewhere in this module) instead of causing an
+# exclusion. "unknown" falls to fees.py's CATEGORY_RATES["_default"] rate
+# (0.05), identically to any other unrecognized category string -- no new
+# fee-lookup branch, no change to the pre-registered significance gate. See
+# task-13-report.md for the full live evidence.
+#
+# Real data also showed category strings with stray whitespace (e.g.
+# "Pop-Culture ", trailing space, verified live) that would silently miss a
+# clean fees.py key match even when one exists -- `_normalize_category`
+# strips before lowering to close that gap too.
+
+
+def _normalize_category(raw) -> str:
+    if pd.isna(raw):
+        return "unknown"
+    s = str(raw).strip()
+    return s.lower() if s else "unknown"
+
+
 COLUMN_MAP = {
     # ours -> Gamma field/CSV-export column names. (Not the third-party dataset's
     # columns -- see module docstring for why.)
@@ -116,6 +168,8 @@ def _classify_outcome(outcomes: list, prices: list) -> tuple[str | None, str | N
 def _row_to_record(row: dict) -> MarketRecord | Exclusion:
     mid = str(row.get(COLUMN_MAP["market_id"], "unknown"))
     for ours, theirs in COLUMN_MAP.items():
+        if ours == "category":
+            continue  # see "Task 13 real-API discovery" note above -- null/missing -> "unknown", not excluded
         if theirs not in row or pd.isna(row[theirs]):
             return Exclusion(market_id=mid, reason=f"missing_field:{ours}")
     closed = row[COLUMN_MAP["closed"]]
@@ -132,7 +186,7 @@ def _row_to_record(row: dict) -> MarketRecord | Exclusion:
     try:
         return MarketRecord(
             market_id=mid,
-            category=str(row[COLUMN_MAP["category"]]).lower(),
+            category=_normalize_category(row.get(COLUMN_MAP["category"])),
             created_ts=int(pd.Timestamp(row[COLUMN_MAP["created_ts"]]).timestamp()),
             resolved_ts=int(pd.Timestamp(row[COLUMN_MAP["resolved_ts"]]).timestamp()),
             resolved_outcome=outcome,
@@ -154,6 +208,8 @@ def load_dataset_csv(path: str) -> tuple[list[MarketRecord], list[Exclusion]]:
 def _gamma_to_record(m: dict) -> MarketRecord | Exclusion:
     mid = str(m.get(COLUMN_MAP["market_id"], "unknown"))
     for ours, theirs in COLUMN_MAP.items():
+        if ours == "category":
+            continue  # see "Task 13 real-API discovery" note above -- null/missing -> "unknown", not excluded
         if m.get(theirs) in (None, ""):
             return Exclusion(market_id=mid, reason=f"missing_field:{ours}")
     if not m.get(COLUMN_MAP["closed"]):
@@ -169,7 +225,7 @@ def _gamma_to_record(m: dict) -> MarketRecord | Exclusion:
     try:
         return MarketRecord(
             market_id=mid,
-            category=str(m.get(COLUMN_MAP["category"], "unknown")).lower(),
+            category=_normalize_category(m.get(COLUMN_MAP["category"])),
             created_ts=int(pd.Timestamp(m[COLUMN_MAP["created_ts"]]).timestamp()),
             resolved_ts=int(pd.Timestamp(m[COLUMN_MAP["resolved_ts"]]).timestamp()),
             resolved_outcome=outcome,
@@ -181,15 +237,20 @@ def _gamma_to_record(m: dict) -> MarketRecord | Exclusion:
 
 def load_from_gamma(client: PolymarketClient,
                     max_markets: int | None = None) -> tuple[list[MarketRecord], list[Exclusion]]:
-    records, exclusions, offset = [], [], 0
+    # Keyset (cursor) pagination, not offset -- see PolymarketClient.fetch_markets_keyset
+    # for why plain offset pagination can't reach far enough for this study.
+    records, exclusions = [], []
+    cursor = None
     while True:
-        page = client.fetch_markets_page(offset=offset)
+        page, next_cursor = client.fetch_markets_keyset(cursor=cursor)
         if not page:
             break
         for m in page:
             r = _gamma_to_record(m)
             (records if isinstance(r, MarketRecord) else exclusions).append(r)
-        offset += len(page)
         if max_markets and len(records) >= max_markets:
             break
+        if not next_cursor:
+            break
+        cursor = next_cursor
     return records, exclusions
