@@ -31,6 +31,14 @@ def test_nothing_silently_dropped():
     total_rows = len(pd.read_csv(FIX))
     records, exclusions = load_dataset_csv(str(FIX))
     assert len(records) + len(exclusions) == total_rows
+    # Exact-count assertion: pin the fixture to 3 records, 5 exclusions, so any
+    # future threshold drift (e.g. reverting RESOLVED_PRICE_THRESHOLD back to 0.9)
+    # breaks loudly instead of silently reclassifying records. The fixture row
+    # 0xbbb222 with prices [0.001, 0.999] is specifically the boundary case:
+    # it resolves to NO under 0.999 threshold (after round-2 fix) but would
+    # become an exclusion under any looser threshold.
+    assert len(records) == 3
+    assert len(exclusions) == 5
 
 
 # --- Boundary-pinning tests (review round 1) ---------------------------------
