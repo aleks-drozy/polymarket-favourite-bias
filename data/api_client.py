@@ -1,0 +1,49 @@
+"""Read-only PolyMarket client: Gamma (metadata) + CLOB (price history).
+No auth needed for reads. Disk-cached, throttled (~60 req/min unauthenticated)."""
+from __future__ import annotations
+import hashlib
+import json
+import pathlib
+import time
+import requests
+from data.schema import Candle
+
+GAMMA = "https://gamma-api.polymarket.com"
+CLOB = "https://clob.polymarket.com"
+
+
+class PolymarketClient:
+    def __init__(self, cache_dir: str = "cache", sleep_s: float = 1.1):
+        self.cache_dir = pathlib.Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.sleep_s = sleep_s
+
+    def _get(self, url: str) -> dict | list:
+        key = self.cache_dir / (hashlib.sha1(url.encode()).hexdigest() + ".json")
+        if key.exists():
+            return json.loads(key.read_text())
+        time.sleep(self.sleep_s)
+        resp = requests.get(url, timeout=30)
+        resp.raise_for_status()
+        payload = resp.json()
+        key.write_text(json.dumps(payload))
+        return payload
+
+    def get_market(self, condition_id: str) -> dict:
+        # NOTE: the live Gamma API defaults `condition_ids` lookups to closed=false
+        # (i.e. active markets only) and silently returns [] for any resolved market
+        # without an explicit closed=true. This project only ever looks up resolved
+        # markets, so closed=true is hardcoded here. See task-10-report.md.
+        payload = self._get(f"{GAMMA}/markets?condition_ids={condition_id}&closed=true")
+        return payload[0]
+
+    def fetch_markets_page(self, offset: int, limit: int = 100) -> list[dict]:
+        return self._get(f"{GAMMA}/markets?closed=true&limit={limit}&offset={offset}")
+
+    def get_price_history(self, clob_token_id: str, start_ts: int, end_ts: int) -> list[Candle]:
+        payload = self._get(
+            f"{CLOB}/prices-history?market={clob_token_id}"
+            f"&startTs={start_ts}&endTs={end_ts}&fidelity=720")
+        return [Candle(t=int(h["t"]), price_yes=float(h["p"]))
+                for h in payload.get("history", [])
+                if 0.0 < float(h["p"]) < 1.0]
