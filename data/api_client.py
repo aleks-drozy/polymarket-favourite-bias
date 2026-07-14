@@ -40,7 +40,9 @@ class PolymarketClient:
     def fetch_markets_page(self, offset: int, limit: int = 100) -> list[dict]:
         return self._get(f"{GAMMA}/markets?closed=true&limit={limit}&offset={offset}")
 
-    def fetch_markets_keyset(self, cursor: str | None = None, limit: int = 100
+    def fetch_markets_keyset(self, cursor: str | None = None, limit: int = 100,
+                             end_date_min: str | None = None,
+                             end_date_max: str | None = None
                              ) -> tuple[list[dict], str | None]:
         # NOTE (Task 13, live-verified): `fetch_markets_page`'s plain offset
         # pagination hard-caps around offset~2000 -- HTTP 422
@@ -59,6 +61,10 @@ class PolymarketClient:
         url = f"{GAMMA}/markets/keyset?closed=true&limit={limit}"
         if cursor:
             url += f"&after_cursor={cursor}"
+        if end_date_min:
+            url += f"&end_date_min={end_date_min}"
+        if end_date_max:
+            url += f"&end_date_max={end_date_max}"
         payload = self._get(url)
         return payload.get("markets") or [], payload.get("next_cursor")
 

@@ -35,7 +35,7 @@ def _yes_token_id(client, market_id: str) -> str | None:
 
 
 def run_pipeline(records: list[MarketRecord], client, results_dir: str = "results",
-                 n_crossval: int = 100) -> dict:
+                 n_crossval: int = 100, extra_config: dict | None = None) -> dict:
     out_dir = pathlib.Path(results_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     floor, kept = calibrate_volume_floor(records)
@@ -67,6 +67,8 @@ def run_pipeline(records: list[MarketRecord], client, results_dir: str = "result
                           "categories": dict(categories),
                           "run_ts": int(time.time())},
                "bets": [b.model_dump() for b in bets]}
+    if extra_config:
+        payload["config"].update(extra_config)
     (out_dir / "results.json").write_text(json.dumps(payload, indent=1))
 
     with open(out_dir / "exclusions.csv", "w", newline="") as f:
@@ -80,6 +82,22 @@ def run_pipeline(records: list[MarketRecord], client, results_dir: str = "result
     return payload
 
 
+# Study window bound (Task 13, live-verified -- see task-13-report.md for the
+# full evidence). Unbounded ascending pagination from Gamma's 2020-10 start
+# runs into the millions by 2026 -- single months hit 6,100+ markets by
+# 2026-01/06 (capped during measurement; growth is accelerating, apparently
+# driven by high-frequency automated markets). Bounded to 2023-04-01 through
+# 2025-01-01: comfortably inside Polymarket's CLOB-covered era (CLOB
+# /prices-history coverage measured live at 0% for Sept-Dec 2022, ramping
+# through Feb-Mar 2023, ~100% from April 2023 onward -- see
+# data/dataset_loader.py's category-nullness note for the parallel finding
+# that drove the same conclusion from the metadata side), giving ~21 months
+# and ~16,800 raw Gamma markets (measured live via end_date_min/max) -- well
+# clear of "thousands of bets" without the unbounded run's absurd volume.
+STUDY_WINDOW_END_DATE_MIN = "2023-04-01"
+STUDY_WINDOW_END_DATE_MAX = "2025-01-01"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--max-markets", type=int, default=None)
@@ -88,9 +106,14 @@ def main():
     # Metadata source per Task 11's branch decision: Gamma API is PRIMARY
     # (third-party dataset outcomes are order-book quotes, not settlements).
     from data.dataset_loader import load_from_gamma
-    records, load_exclusions = load_from_gamma(client, max_markets=args.max_markets)
+    records, load_exclusions = load_from_gamma(
+        client, max_markets=args.max_markets,
+        end_date_min=STUDY_WINDOW_END_DATE_MIN, end_date_max=STUDY_WINDOW_END_DATE_MAX)
     print(f"metadata: {len(records)} records, {len(load_exclusions)} load exclusions")
-    payload = run_pipeline(records, client)
+    payload = run_pipeline(records, client, extra_config={
+        "study_window_end_date_min": STUDY_WINDOW_END_DATE_MIN,
+        "study_window_end_date_max": STUDY_WINDOW_END_DATE_MAX,
+    })
     print(json.dumps(payload["config"], indent=2))
 
 

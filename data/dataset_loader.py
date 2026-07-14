@@ -235,19 +235,43 @@ def _gamma_to_record(m: dict) -> MarketRecord | Exclusion:
         return Exclusion(market_id=mid, reason=f"missing_field:{exc.__class__.__name__}")
 
 
-def load_from_gamma(client: PolymarketClient,
-                    max_markets: int | None = None) -> tuple[list[MarketRecord], list[Exclusion]]:
+def load_from_gamma(client: PolymarketClient, max_markets: int | None = None,
+                    end_date_min: str | None = None, end_date_max: str | None = None
+                    ) -> tuple[list[MarketRecord], list[Exclusion]]:
     # Keyset (cursor) pagination, not offset -- see PolymarketClient.fetch_markets_keyset
     # for why plain offset pagination can't reach far enough for this study.
+    #
+    # end_date_min/end_date_max bound the *server-side* query by Gamma's
+    # `endDate` (scheduled resolution date) -- the only date filter the API
+    # exposes -- as an optional study-window bound (see run_backtest.py's
+    # main() for the concrete window and why it's needed: unbounded, this
+    # pagination runs into the millions given the growth curve observed live
+    # during Task 13 -- single months hit 6,100+ markets by 2026, capped
+    # during measurement). Since endDate can drift from the market's *actual*
+    # closedTime, matching records are additionally filtered client-side by
+    # closedTime (the literal thing a "study window" means) -- drift cases
+    # are excluded as "outside_study_window" rather than silently dropped
+    # (every exclusion logged).
+    lo_ts = int(pd.Timestamp(end_date_min).timestamp()) if end_date_min else None
+    hi_ts = int(pd.Timestamp(end_date_max).timestamp()) if end_date_max else None
     records, exclusions = [], []
     cursor = None
     while True:
-        page, next_cursor = client.fetch_markets_keyset(cursor=cursor)
+        page, next_cursor = client.fetch_markets_keyset(
+            cursor=cursor, end_date_min=end_date_min, end_date_max=end_date_max)
         if not page:
             break
         for m in page:
             r = _gamma_to_record(m)
-            (records if isinstance(r, MarketRecord) else exclusions).append(r)
+            if isinstance(r, MarketRecord):
+                out_of_window = ((lo_ts is not None and r.resolved_ts < lo_ts) or
+                                 (hi_ts is not None and r.resolved_ts >= hi_ts))
+                if out_of_window:
+                    exclusions.append(Exclusion(market_id=r.market_id, reason="outside_study_window"))
+                else:
+                    records.append(r)
+            else:
+                exclusions.append(r)
         if max_markets and len(records) >= max_markets:
             break
         if not next_cursor:

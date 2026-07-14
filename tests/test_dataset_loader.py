@@ -262,7 +262,8 @@ class _StubClient:
         self._pages = list(pages)
         self.calls = []
 
-    def fetch_markets_keyset(self, cursor=None, limit: int = 100):
+    def fetch_markets_keyset(self, cursor=None, limit: int = 100,
+                             end_date_min=None, end_date_max=None):
         self.calls.append(cursor)
         if not self._pages:
             return [], None
@@ -300,3 +301,42 @@ def test_load_from_gamma_stops_on_empty_page():
     # wasted extra call to discover the end (an efficiency improvement over
     # the old offset-based always-one-more-call pattern)
     assert client.calls == [None]
+
+
+class _KwargsSpyClient:
+    """Records the kwargs each fetch_markets_keyset call received; serves one
+    page then stops."""
+
+    def __init__(self, page):
+        self._page = page
+        self.kwargs_seen = []
+
+    def fetch_markets_keyset(self, cursor=None, limit=100, end_date_min=None, end_date_max=None):
+        self.kwargs_seen.append({"cursor": cursor, "end_date_min": end_date_min,
+                                 "end_date_max": end_date_max})
+        if self._page is None:
+            return [], None
+        page, self._page = self._page, None
+        return page, None
+
+
+def test_load_from_gamma_forwards_date_bounds_to_client():
+    client = _KwargsSpyClient([GAMMA_VALID_RESOLVED])
+    load_from_gamma(client, end_date_min="2023-01-01", end_date_max="2023-06-01")
+    assert client.kwargs_seen[0]["end_date_min"] == "2023-01-01"
+    assert client.kwargs_seen[0]["end_date_max"] == "2023-06-01"
+
+
+def test_load_from_gamma_excludes_records_outside_study_window():
+    # GAMMA_VALID_RESOLVED is a real market resolved 2021-01-02 (closedTime
+    # "2021-01-02 21:35:34+00") -- well before a 2023+ study window. Gamma's
+    # server-side end_date_min/max filtering should normally prevent this
+    # from even being fetched, but the client-side closedTime check is a
+    # drift guard (endDate != closedTime is possible) that must still catch
+    # it and log it as an exclusion rather than silently dropping it.
+    client = _KwargsSpyClient([GAMMA_VALID_RESOLVED])
+    records, exclusions = load_from_gamma(
+        client, end_date_min="2023-01-01", end_date_max="2023-06-01")
+    assert records == []
+    assert len(exclusions) == 1
+    assert exclusions[0].reason == "outside_study_window"
