@@ -1,17 +1,28 @@
 """Dataset-vs-official-API agreement check (spec §4). Agreement % is reported
-in the WRITEUP regardless of outcome."""
+in the WRITEUP regardless of outcome.
+
+Outcome classification uses the same RESOLVED_PRICE_THRESHOLD (0.999) as the dataset
+loader (see data/dataset_loader.py) to ensure consistency when comparing API data
+against loaded records. Real Gamma settled markets show prices like 0.9995, not
+exactly 1.0, so threshold-based comparison is required for accurate agreement metrics."""
 from __future__ import annotations
 import json
 import numpy as np
 import pandas as pd
 from data.schema import MarketRecord
+from data.dataset_loader import RESOLVED_PRICE_THRESHOLD
 
 
 def _api_outcome(market: dict) -> str | None:
     prices = json.loads(market.get("outcomePrices", "[]") or "[]")
     if len(prices) != 2:
         return None
-    return "YES" if float(prices[0]) == 1.0 else "NO"
+    p0, p1 = float(prices[0]), float(prices[1])
+    if p0 >= RESOLVED_PRICE_THRESHOLD and p1 < RESOLVED_PRICE_THRESHOLD:
+        return "YES"
+    if p1 >= RESOLVED_PRICE_THRESHOLD and p0 < RESOLVED_PRICE_THRESHOLD:
+        return "NO"
+    return None
 
 
 def cross_validate(records: list[MarketRecord], client, n_sample: int = 100,
