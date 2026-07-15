@@ -8,9 +8,10 @@ This is a research backtest for a portfolio piece, not a live trading system —
 
 ```bash
 pip install -r requirements.txt
-python -m pytest                          # 71 tests, no network
+python -m pytest                          # 78 tests, no network
 python run_backtest.py                    # -> results/results.json, exclusions.csv, crossval_report.json
 python run_mc.py                          # -> results/mc_results.json (bootstrap, null, concentration, gate)
+python run_underdog.py   # mirror study: always bet the underdog
 python scripts/dump_load_exclusions.py    # -> results/load_exclusions.csv (metadata-load exclusion breakdown)
 ```
 
