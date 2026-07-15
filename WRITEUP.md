@@ -105,7 +105,72 @@ Even with **fees removed entirely**, the strategy loses money. Fees make it wors
 
 **Coinflip diagnostic slice:** 6 markets snapshotted at an exact 50/50 price (`is_coinflip = true`), ROI **+30.8%** on that tiny slice — not a claim, just the honest number for the case the favourite rule has to break a tie on. n=6 is far too small to read anything into.
 
-## 5. Verdict
+## 5. The other side: always betting the underdog
+
+The favourite-longshot bias literature makes two mirror-image predictions: favourites should be *underpriced* (bet them, profit) and longshots should be *overpriced* (bet them, lose badly). Section 4 tested the first half and found the favourite side priced close to fair — a small, statistically-indeterminate loss. This section tests the second half, as a pure mirror of the exact same sample: same **2,418** markets from `results/results.json`, same snapshot prices, same $1 flat stake, same fee model, side = complement of the favourite (`backtest/mirror.py`, `run_underdog.py`). **Pre-registered gate, stated before running, identical to the favourite study:** PROFITABLE iff bootstrap 95% CI lower bound > 0% after fees **and** the edge isn't concentrated (same machinery, same seeds, 10,000 sims).
+
+| Metric | Value | Source |
+|---|---|---|
+| Bets | 2,418 | `mc_results_underdog.json` → `observed.n_bets` |
+| Win rate | **9.4%** | `mc_results_underdog.json` → `observed.win_rate` |
+| ROI (observed) | **−52.63%** | `mc_results_underdog.json` → `observed.roi` |
+| Total P&L | −$1,272.50 on $2,418 staked | `mc_results_underdog.json` → `observed.total_pnl` |
+| Max drawdown | $1,335.75 | `mc_results_underdog.json` → `observed.max_drawdown` |
+
+**Bootstrap 95% CI on ROI** (10,000 resamples-with-replacement):
+
+| p2.5 (lower) | mean | p97.5 (upper) |
+|---|---|---|
+| **−64.85%** | −52.57% | **−36.71%** |
+
+The entire interval sits deep in negative territory — nowhere near breakeven in either direction.
+
+**Random-side null** (10,000 sims, each market's side coin-flipped independently, same prices/fees): mean null ROI **−26.81%** — matching the favourite study's −26.8% almost exactly, as expected, since the null distribution is a symmetric 50/50 coin-flip over the same two sides regardless of which side is passed in as the "base" bet. The observed always-underdog ROI (−52.63%) is worse than **all 10,000** null draws (**p = 1.0**). Betting the underdog isn't just unprofitable — it's worse than picking a side at random on every single market. That's the sharpest possible confirmation that PolyMarket's mispricing, such as it is, is concentrated entirely on the longshot side.
+
+**Concentration check** (leave-one-group-out bootstrap):
+
+| Group held out | n in group | LOO CI lower bound |
+|---|---|---|
+| `quarter:2024Q1` | 150 | −63.87% |
+| `quarter:2024Q2` | 144 | −65.15% |
+| `quarter:2024Q3` | 663 | −68.73% |
+| `quarter:2024Q4` | 1,392 | −69.72% |
+
+Every quarter, held out individually, still leaves a deeply negative CI lower bound — this isn't one bad window dragging the average down, it's uniform across the whole study period. As with the favourite study, `category:unknown` is skipped as uninformative (2,493 of 2,498 post-floor markets) and the small 2023 quarters/category are skipped under the group-size floor; and as before, because the *full* CI lower bound is already negative, `concentrated: false` is satisfied formally regardless of the by-slice breakdown — the quarter table is what does the actual diagnostic work, and it shows a consistent, not lucky/unlucky, picture.
+
+**Fee sensitivity:**
+
+| Fee multiple | ROI |
+|---|---|
+| 0x (no fees) | **−48.08%** |
+| 1x (actual, observed) | −52.63% |
+| 2x | **−57.17%** |
+
+Even with fees switched off entirely, the underdog strategy is catastrophic. Fees make a bad result somewhat worse, but they are nowhere near the reason it loses.
+
+**Coinflip diagnostic slice:** the same 6 markets snapshotted at an exact 50/50 price, mirrored to the underdog side, ROI **−35.83%** — again, too small a slice (n=6) to read anything into beyond "consistent with the rest."
+
+**Gate verdict:**
+
+```
+gate.ci_lower_positive = false
+gate.not_concentrated  = true
+gate.verdict            = "NOT PROVEN"
+```
+
+Stated explicitly: the underdog strategy's pre-registered gate verdict is **NOT PROVEN** — but unlike the favourite side's genuinely marginal result, this isn't a close call rescued or denied by a technicality. The CI (−64.85% to −36.71%) doesn't come within shouting distance of breakeven. The gate machinery only distinguishes "profitable" from "not proven"; it has no separate category for "catastrophically unprofitable" versus "arguably fair-priced," so the raw numbers, not the verdict label, are what carries the finding here.
+
+**The complete picture:**
+
+| Strategy | ROI (observed) | Source |
+|---|---|---|
+| Favourite (always bet the favourite) | **−0.98%** | `mc_results.json` → `observed.roi` |
+| Random side (coin flip) | **−26.8%** | `mc_results.json` → `null.null_mean_roi` |
+| Underdog (always bet the underdog) | **−52.63%** | `mc_results_underdog.json` → `observed.roi` |
+
+This completes the favourite-longshot-bias picture on PolyMarket. Longshots are badly overpriced (−52.63%, worse than a random side-pick). Favourites are close to fairly priced (−0.98%, not statistically distinguishable from breakeven at this horizon). Random ranks exactly in between, as it should when it's an unweighted average of the other two. The bias exists — it just isn't expressed as "buy favourites for profit." It's expressed as "don't buy longshots": the mispricing this study finds sits entirely on the overpriced underdog side, and the favourite side's near-fair pricing is simply the mirror image of that, not an independent source of edge.
+
+## 6. Verdict
 
 ```
 gate.ci_lower_positive = false
@@ -115,7 +180,7 @@ gate.verdict            = "NOT PROVEN"
 
 **NOT PROVEN, stated plainly.** The bootstrap 95% CI lower bound (−2.46%) does not clear breakeven, so the first gate condition fails outright — the second condition (concentration) doesn't get to save it, and shouldn't: this isn't a "so close" result rescued by a technicality, it's a CI that sits comfortably in negative territory. PolyMarket prices favourites close to fairly at the 24–48h horizon this study tests. The strategy beats a random-side null badly (−0.98% vs −26.8%, p ≈ 0.0001) — favourites really are priced better than chance — but "better than random" and "profitable" are different claims, and only the second one was pre-registered as the bar. There is no favourite-longshot bias here that's exploitable at this horizon under these costs.
 
-## 6. Limitations
+## 7. Limitations
 
 - **12h+ candle granularity.** CLOB `/prices-history` only returns 12-hour-fidelity candles for resolved markets (fine-grained 5s bars are active-market-only), so the snapshot price is the *latest candle in the eligible window*, not an exact 24h-before-resolution tick. Coarser than a live system would use.
 - **Taker-only fee model, spread not modeled.** Entry is simulated at the candle price, i.e. effectively mid/last, not the ask a real taker order would actually cross at. This is an **optimistic bias** — real execution would be at least as expensive as modeled here, likely worse, which only strengthens the null result.
@@ -124,7 +189,7 @@ gate.verdict            = "NOT PROVEN"
 - **The 0.999 resolution threshold trades off completeness for label purity** — see Data quality above (1.8% of otherwise-valid markets excluded, corrected from an earlier 16% overestimate). It cannot be loosened without either accepting near-tied outcome_prices as a settlement (label noise) or using `umaResolutionStatuses`, which is empty for 81% of the history this study needs.
 - **Study window is bounded to [2023-04-01, 2025-01-01)**, not "all of PolyMarket history" — CLOB price-history coverage measured live at ~0% before April 2023, ramping to ~100% by that date; and unbounded pagination past 2025 runs into millions of markets driven by high-frequency auto-generated 2026-era markets. The result describes this ~21-month window, not PolyMarket's full lifetime.
 
-## 7. What would change my mind / future work
+## 8. What would change my mind / future work
 
 - **The conditional ML phase did not fire.** Per the design spec, phase 2 (a walk-forward classifier deciding which favourites to skip) only triggers on a borderline Monte Carlo result or a suspicious subgroup pattern. Neither happened here: the bootstrap CI lower bound (−2.46%) is well beyond "borderline," and the concentration check found no suspicious subgroup — a clean, consistent null across all four 2024 quarters. There is no signal here for a classifier to filter toward; building one would be curve-fitting on noise.
 - **Kelly or liquidity-aware sizing** could still be worth a follow-up even given this null — a flat $1 stake was chosen deliberately to isolate the selection rule from bankroll management, but it also means this backtest says nothing about whether *some* favourites (higher-confidence ones, say) might individually clear the bar even though the pooled average doesn't. That would need per-market edge estimation this study doesn't attempt.
