@@ -11,6 +11,12 @@ from data.schema import Candle
 GAMMA = "https://gamma-api.polymarket.com"
 CLOB = "https://clob.polymarket.com"
 
+# A single transient 5xx/connection blip must not kill an hours-long backtest
+# run. Retry those with exponential backoff; a 4xx is a real error (bad
+# request/not found) and must surface immediately, not be retried.
+MAX_RETRIES = 5
+RETRY_BACKOFF_S = [2, 4, 8, 16]
+
 
 class PolymarketClient:
     def __init__(self, cache_dir: str = "cache", sleep_s: float = 1.1):
@@ -22,12 +28,24 @@ class PolymarketClient:
         key = self.cache_dir / (hashlib.sha1(url.encode()).hexdigest() + ".json")
         if key.exists():
             return json.loads(key.read_text())
-        time.sleep(self.sleep_s)
-        resp = requests.get(url, timeout=30)
-        resp.raise_for_status()
-        payload = resp.json()
-        key.write_text(json.dumps(payload))
-        return payload
+        last_exc: requests.exceptions.RequestException | None = None
+        for attempt in range(MAX_RETRIES):
+            time.sleep(self.sleep_s)  # throttle, separate from retry backoff
+            try:
+                resp = requests.get(url, timeout=30)
+                resp.raise_for_status()
+            except requests.exceptions.RequestException as exc:
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                if status is not None and 400 <= status < 500:
+                    raise  # real client error -- surface immediately, no retry
+                last_exc = exc
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(RETRY_BACKOFF_S[attempt])
+                continue
+            payload = resp.json()
+            key.write_text(json.dumps(payload))
+            return payload
+        raise last_exc
 
     def get_market(self, condition_id: str) -> dict:
         # NOTE: the live Gamma API defaults `condition_ids` lookups to closed=false

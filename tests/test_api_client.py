@@ -1,16 +1,22 @@
 import json
 import pathlib
 import pytest
-from data.api_client import PolymarketClient
+import requests
+from data.api_client import PolymarketClient, MAX_RETRIES
 
 FIX = pathlib.Path(__file__).parent / "fixtures"
 
 
 class FakeResponse:
-    def __init__(self, payload):
+    def __init__(self, payload, status_code=200, raise_status=False):
         self._payload = payload
+        self.status_code = status_code
+        self._raise_status = raise_status
     def raise_for_status(self):
-        pass
+        if self._raise_status:
+            err = requests.exceptions.HTTPError(f"{self.status_code} Server Error")
+            err.response = self
+            raise err
     def json(self):
         return self._payload
 
@@ -58,6 +64,45 @@ def test_cache_prevents_second_network_call(client):
     client.get_price_history("111", 1699000000, 1700000000)
     client.get_price_history("111", 1699000000, 1700000000)
     assert len(client._calls) == 1
+
+
+def test_get_retries_on_5xx_then_succeeds(tmp_path, monkeypatch):
+    monkeypatch.setattr("data.api_client.time.sleep", lambda s: None)
+    calls = []
+    responses = [
+        FakeResponse(None, status_code=500, raise_status=True),
+        FakeResponse(None, status_code=500, raise_status=True),
+        FakeResponse({"ok": True}, status_code=200),
+    ]
+
+    def fake_get(url, timeout):
+        calls.append(url)
+        return responses[len(calls) - 1]
+
+    monkeypatch.setattr("data.api_client.requests.get", fake_get)
+    c = PolymarketClient(cache_dir=str(tmp_path), sleep_s=0.0)
+
+    result = c._get("https://gamma-api.polymarket.com/markets/keyset?closed=true&limit=100")
+
+    assert result == {"ok": True}
+    assert len(calls) == 3
+
+
+def test_get_raises_after_max_retries_on_persistent_5xx(tmp_path, monkeypatch):
+    monkeypatch.setattr("data.api_client.time.sleep", lambda s: None)
+    calls = []
+
+    def fake_get(url, timeout):
+        calls.append(url)
+        return FakeResponse(None, status_code=500, raise_status=True)
+
+    monkeypatch.setattr("data.api_client.requests.get", fake_get)
+    c = PolymarketClient(cache_dir=str(tmp_path), sleep_s=0.0)
+
+    with pytest.raises(requests.exceptions.HTTPError):
+        c._get("https://gamma-api.polymarket.com/markets/keyset?closed=true&limit=100")
+
+    assert len(calls) == MAX_RETRIES
 
 
 @pytest.mark.network
