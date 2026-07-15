@@ -1,0 +1,8 @@
+{
+ "n_checked": 100,
+ "n_outcome_match": 100,
+ "n_ts_match": 100,
+ "n_api_errors": 0,
+ "agreement_pct": 100.0,
+ "mismatches": []
+}

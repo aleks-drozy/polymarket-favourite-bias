@@ -1,7 +1,6 @@
 __pycache__/
 .pytest_cache/
 cache/
-results/*
-!results/.gitkeep
+results/*.log
 *.egg-info/
 dataset_tmp/

@@ -1,0 +1,66 @@
+{
+ "observed": {
+  "roi": -0.009775474181116317,
+  "win_rate": 0.9061207609594706,
+  "total_pnl": -23.637096569939256,
+  "max_drawdown": 52.48860570801766,
+  "n_bets": 2418
+ },
+ "bootstrap_ci": {
+  "mean": -0.009773391491141903,
+  "lower": -0.024566493748071367,
+  "upper": 0.004865342667515681
+ },
+ "null": {
+  "p_value": 9.999000099990002e-05,
+  "null_mean_roi": -0.26789886521202805
+ },
+ "concentration": {
+  "full_ci": {
+   "mean": -0.009687052525522231,
+   "lower": -0.024714640208843473,
+   "upper": 0.004820404129576907
+  },
+  "skipped_small_groups": [
+   "category:us-current-affairs",
+   "quarter:2023Q2",
+   "quarter:2023Q3",
+   "quarter:2023Q4"
+  ],
+  "skipped_uninformative": [
+   "category:unknown"
+  ],
+  "concentrated": false,
+  "groups": {
+   "quarter:2024Q1": {
+    "n_excluded": 150,
+    "ci_lower": -0.02491499152640255
+   },
+   "quarter:2024Q2": {
+    "n_excluded": 144,
+    "ci_lower": -0.028019001734529692
+   },
+   "quarter:2024Q3": {
+    "n_excluded": 663,
+    "ci_lower": -0.026421336634135498
+   },
+   "quarter:2024Q4": {
+    "n_excluded": 1392,
+    "ci_lower": -0.02528775394048893
+   }
+  }
+ },
+ "fee_sensitivity": {
+  "roi_no_fees": -0.005256046968543974,
+  "roi_double_fees": -0.014294901393688648
+ },
+ "coinflip_slice": {
+  "n": 6,
+  "roi": 0.30833333333333335
+ },
+ "gate": {
+  "ci_lower_positive": false,
+  "not_concentrated": true,
+  "verdict": "NOT PROVEN"
+ }
+}
