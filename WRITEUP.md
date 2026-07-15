@@ -21,7 +21,7 @@ PolyMarket is an interesting venue to test this because its market structure dif
 
 **Pre-registered gate** (fixed in the design spec before any result existed, `docs/superpowers/specs/2026-07-14-polymarket-favourite-bias-design.md` §6):
 
-> The strategy is called "profitable" only if the bootstrap 95% CI's lower bound clears breakeven (**> 0% ROI after fees**) **and** the edge isn't concentrated in one category or time window. Anything short of that is reported as null/marginal, not massaged.
+> the strategy is called "profitable" only if the bootstrap CI's lower bound clears breakeven (> 0% ROI after fees) **and** the edge isn't concentrated in one category or time window (e.g. entirely explained by the 2024 US election cycle). Anything short of that is reported as null/marginal, not massaged.
 
 ## 3. Data quality
 
