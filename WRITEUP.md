@@ -19,7 +19,7 @@ PolyMarket is an interesting venue to test this because its market structure dif
 - **Fee model:** `fee = rate × price × (1 − price) × shares`, taker-only (makers pay nothing), implemented directly from `docs.polymarket.com/trading/fees` and verified live on **2026-07-14** (HTTP 200). Category rates: crypto 0.07; politics, finance, tech, mentions 0.04; sports, economics, culture, weather, other/general 0.05 (`_default`); geopolitics 0.
 - **Data:** Gamma API is the metadata source (see Data quality — the alternative third-party dataset was rejected). CLOB `/prices-history` supplies snapshot prices.
 
-**Pre-registered gate** (fixed in the design spec before any result existed, `docs/superpowers/specs/2026-07-14-polymarket-favourite-bias-design.md` §6):
+**Pre-registered gate** (fixed in the design spec before any result existed, [`docs/specs/2026-07-14-polymarket-favourite-bias.md`](docs/specs/2026-07-14-polymarket-favourite-bias.md) §6):
 
 > the strategy is called "profitable" only if the bootstrap CI's lower bound clears breakeven (> 0% ROI after fees) **and** the edge isn't concentrated in one category or time window (e.g. entirely explained by the 2024 US election cycle). Anything short of that is reported as null/marginal, not massaged.
 

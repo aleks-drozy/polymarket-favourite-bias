@@ -39,8 +39,8 @@ def test_nothing_silently_dropped():
     assert len(exclusions) == 5
 
 
-# --- Boundary-pinning tests (review round 1) ---------------------------------
-# The reviewer's finding: any RESOLVED_PRICE_THRESHOLD between 0.51 and 0.98
+# --- Boundary-pinning tests ---------------------------------------------------
+# Review finding: any RESOLVED_PRICE_THRESHOLD between 0.51 and 0.98
 # passed the original 3 tests, because none of them exercised the boundary.
 # These pin the constant itself (currently 0.999) rather than just "some
 # threshold in a big range" -- if someone silently loosens or tightens
@@ -70,13 +70,12 @@ def test_classify_outcome_boundary_applies_to_either_side():
     assert reason == "bad_outcome"
 
 
-# --- load_from_gamma / _gamma_to_record coverage (review round 1) ------------
-# Realistic Gamma market dicts, grounded in live `GET /markets?closed=...`
-# responses pulled during the round-1 investigation (see
-# .superpowers/sdd/task-11-report.md, "Fix round 1"). Gamma encodes
-# outcomes/outcomePrices as JSON *strings* (not native lists), which these
-# dicts reproduce faithfully -- a shape difference from the CSV fixture that
-# is otherwise untested.
+# --- load_from_gamma / _gamma_to_record coverage -----------------------------
+# Realistic Gamma market dicts, copied from live `GET /markets?closed=...`
+# responses pulled during the investigation that set RESOLVED_PRICE_THRESHOLD
+# (see data/dataset_loader.py). Gamma encodes outcomes/outcomePrices as JSON
+# *strings* (not native lists), which these dicts reproduce faithfully -- a
+# shape difference from the CSV fixture that is otherwise untested.
 
 # Real market (conditionId 0x9b946f5...), closed 2021, resolved NO. The
 # winning side is 0.9999989... rather than exactly 1.0 -- real UMA/AMM
@@ -143,10 +142,10 @@ GAMMA_BAD_OUTCOME = {
 # Real market (conditionId 0xa9096ff...): category is genuinely null on this
 # live closed market ("Games Total: O/U 2.5"), which is a real, recurring
 # Gamma pattern (also seen on real open markets during this investigation).
-# Its outcomes are also non-binary (Over/Under) -- so under Task 13's fix
-# (null category no longer excludes on its own, see
-# data/dataset_loader.py's "Task 13 real-API discovery" note), this record
-# still ends up excluded, but for "not_binary", not "missing_field:category".
+# Its outcomes are also non-binary (Over/Under) -- so now that a null
+# category no longer excludes on its own (see data/dataset_loader.py's
+# category-nullness note), this record still ends up excluded, but for
+# "not_binary", not "missing_field:category".
 GAMMA_MISSING_FIELD = {
     "conditionId": "0xa9096ff7e25f808b537e7f95e4d6b690c88f7dc4a49cf01c05ff13e9b401468a",
     "category": None,
@@ -160,8 +159,8 @@ GAMMA_MISSING_FIELD = {
 
 # Real market (conditionId 0xdd22472e...): Polymarket's highest-volume market
 # ever ($1.53B), the 2024 US Presidential Election winner market. category is
-# null here too -- Task 13's live investigation found this is universal for
-# the entire CLOB-covered era (2022-09 onward), not an isolated data-quality
+# null here too -- the live investigation found this is universal for the
+# entire CLOB-covered era (2022-09 onward), not an isolated data-quality
 # blip: the flat `category` field simply stopped being populated Gamma-side.
 # Clean binary Yes/No, cleanly resolved -- isolates the "null category alone
 # must not exclude" behavior from any other exclusion reason.
@@ -217,9 +216,9 @@ def test_gamma_to_record_bad_outcome():
 
 
 def test_gamma_to_record_missing_field():
-    # Category-nullness no longer excludes on its own (Task 13 fix); this
-    # fixture's outcomes are Over/Under, so it now falls through to
-    # not_binary instead of missing_field:category.
+    # Category-nullness no longer excludes on its own; this fixture's
+    # outcomes are Over/Under, so it now falls through to not_binary
+    # instead of missing_field:category.
     r = _gamma_to_record(GAMMA_MISSING_FIELD)
     assert isinstance(r, Exclusion)
     assert r.reason == "not_binary"
@@ -283,7 +282,7 @@ def test_load_from_gamma_paginates_and_classifies_with_stub_client():
     reasons = sorted(e.reason for e in exclusions)
     # GAMMA_MISSING_FIELD now excludes as "not_binary" (its Over/Under
     # outcomes), not "missing_field:category" -- null category alone no
-    # longer excludes (Task 13 fix, see data/dataset_loader.py).
+    # longer excludes (see data/dataset_loader.py's category-nullness note).
     assert reasons == ["bad_outcome", "not_binary", "not_binary", "not_resolved"]
     # cursor threaded through: None (page 1), then "cursor1" (page 2, whose
     # next_cursor is None -- pages exhausted -- so the loop stops there)

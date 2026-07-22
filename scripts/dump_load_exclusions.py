@@ -1,4 +1,4 @@
-"""Persist the metadata-load exclusion breakdown (Task 13 review follow-up).
+"""Persist the metadata-load exclusion breakdown.
 
 `load_from_gamma`'s `load_exclusions` (not_binary, outside_study_window,
 missing_field:*, bad_outcome -- everything dropped before the volume floor

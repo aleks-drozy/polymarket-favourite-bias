@@ -41,11 +41,11 @@ def run_pipeline(records: list[MarketRecord], client, results_dir: str = "result
     floor, kept = calibrate_volume_floor(records)
     filtered = [r for r in records if r.volume >= floor]
 
-    # Ledger watch item (Task 9/11 progress notes): track distinct lowercased
-    # category strings and their market counts so the writeup can check
-    # fee-slug alignment against backtest/fees.py's CATEGORY_RATES keys --
-    # any category here that's absent from CATEGORY_RATES silently falls to
-    # the _default rate, which is worth knowing about even if it's fine.
+    # Fee-slug watch item: track distinct lowercased category strings and
+    # their market counts so the writeup can check fee-slug alignment against
+    # backtest/fees.py's CATEGORY_RATES keys -- any category here that's
+    # absent from CATEGORY_RATES silently falls to the _default rate, which
+    # is worth knowing about even if it's fine.
     categories: dict[str, int] = collections.Counter(r.category.lower() for r in filtered)
 
     pairs, exclusions = [], []
@@ -82,11 +82,12 @@ def run_pipeline(records: list[MarketRecord], client, results_dir: str = "result
     return payload
 
 
-# Study window bound (Task 13, live-verified -- see task-13-report.md for the
-# full evidence). Unbounded ascending pagination from Gamma's 2020-10 start
-# runs into the millions by 2026 -- single months hit 6,100+ markets by
-# 2026-01/06 (capped during measurement; growth is accelerating, apparently
-# driven by high-frequency automated markets). Bounded to 2023-04-01 through
+# Study window bound (live-verified; the measurements behind it are recorded
+# here, since nothing else in the repo justifies these two dates). Unbounded
+# ascending pagination from Gamma's 2020-10 start runs into the millions by
+# 2026 -- single months hit 6,100+ markets by 2026-01/06 (capped during
+# measurement; growth is accelerating, apparently driven by high-frequency
+# automated markets). Bounded to 2023-04-01 through
 # 2025-01-01: comfortably inside Polymarket's CLOB-covered era (CLOB
 # /prices-history coverage measured live at 0% for Sept-Dec 2022, ramping
 # through Feb-Mar 2023, ~100% from April 2023 onward -- see
@@ -103,7 +104,8 @@ def main():
     ap.add_argument("--max-markets", type=int, default=None)
     args = ap.parse_args()
     client = PolymarketClient()
-    # Metadata source per Task 11's branch decision: Gamma API is PRIMARY
+    # Metadata source, per the branch decision documented in
+    # data/dataset_loader.py's module docstring: Gamma API is PRIMARY
     # (third-party dataset outcomes are order-book quotes, not settlements).
     from data.dataset_loader import load_from_gamma
     records, load_exclusions = load_from_gamma(

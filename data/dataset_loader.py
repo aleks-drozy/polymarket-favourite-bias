@@ -4,7 +4,7 @@ Gamma-shaped export (NOT the third-party dataset -- see below).
 Branch taken: gamma, because the free tier of the third-party dataset lacks genuine
 resolution outcomes.
 
-Evidence (see .superpowers/sdd/task-11-report.md for the full writeup):
+Evidence, measured directly on the candidate dataset:
 manja316/polymarket-historical-data (github.com/manja316/polymarket-historical-data,
 shallow-cloned into dataset_tmp/ for inspection only, never committed) ships
 markets.csv with 9,550 rows, 7,552 of them "closed" (active=0). ZERO of those 7,552
@@ -14,8 +14,8 @@ spread=0.001, i.e. a last-polled order-book quote, not an on-chain settlement pr
 There is also no dedicated resolved-timestamp field: `end_date` is the *scheduled*
 resolution date, and 139 of the 7,552 "closed" rows still have `end_date` in the
 future. Given a favourite-bias backtest needs ground-truth resolution, this dataset
-is unusable as the primary metadata source, so `load_from_gamma` (already built in
-Task 10) is what Task 13's pipeline calls.
+is unusable as the primary metadata source, so `load_from_gamma` is what the
+pipeline in `run_backtest.py` calls.
 
 `load_dataset_csv` is still implemented per the brief's "implement both" requirement,
 but -- since the third-party dataset's own columns were ruled out above -- it targets
@@ -24,8 +24,9 @@ outcomes/outcomePrices/volumeNum columns, i.e. what you'd get by dumping Gamma A
 JSON responses to CSV) rather than the incompatible third-party schema. It shares
 its outcome-classification logic with `load_from_gamma` via `_classify_outcome`.
 
-Resolution-truth rule (tightened in review round 1, see task-11-report.md "Fix
-round 1"): Gamma exposes no usable authoritative settlement field for this
+Resolution-truth rule (tightened on review from 0.9 to 0.999 -- the live
+measurement behind that change is recorded in full at RESOLVED_PRICE_THRESHOLD
+below): Gamma exposes no usable authoritative settlement field for this
 study's purposes -- `umaResolutionStatuses` exists but is empty for ~81% of
 markets closed more than a year ago (checked live), which is most of the
 history this backtest needs, so requiring it would gut the sample far worse
@@ -41,7 +42,9 @@ import pandas as pd
 from data.schema import MarketRecord, Exclusion
 from data.api_client import PolymarketClient
 
-# --- Task 11 review round 1: threshold tightened 0.9 -> 0.999, evidence below ---
+# --- Resolution threshold, tightened on review from 0.9 -> 0.999. Evidence below,
+# because the number is load-bearing: it is the study's entire definition of
+# "this market resolved to this side" ---
 #
 # Investigated whether Gamma exposes an authoritative settlement-truth field
 # instead of relying on outcomePrices at all. Live `GET /markets?closed=true`
@@ -81,13 +84,14 @@ from data.api_client import PolymarketClient
 # 0.9, so nothing in that cluster is newly misclassified as resolved by raising
 # the bar to 0.999. Net trade-off: ~1.8% additional sample loss for meaningfully
 # tighter label purity on the remaining markets, given no authoritative field is
-# available to corroborate price instead. See task-11-report.md ("Fix round 1")
-# for the raw JSON evidence.
+# available to corroborate price instead. To re-derive the figures above: walk
+# `GET /markets?closed=true` across offsets 0-2,950, keep the binary markets, and
+# bucket each one's winning outcomePrices entry against the 0.9 and 0.999 marks.
 RESOLVED_PRICE_THRESHOLD = 0.999
 
-# --- Task 13 real-API discovery: `category` is null for essentially the ENTIRE
-# CLOB-covered era -- treating it as a required field would exclude 100% of
-# markets that could ever produce a bet ---
+# --- Category-nullness note (real-API discovery): `category` is null for
+# essentially the ENTIRE CLOB-covered era -- treating it as a required field
+# would exclude 100% of markets that could ever produce a bet ---
 #
 # Live investigation (ascending `GET /markets/keyset?closed=true`, walked
 # ~6,000 markets from 2020-10-02 onward): `category` is populated for markets
@@ -114,15 +118,16 @@ RESOLVED_PRICE_THRESHOLD = 0.999
 # at all; every CLOB-covered market (2022-09 onward) has category=None.
 #
 # category is only ever used for the fee-rate lookup (backtest/fees.py) and
-# the results-config category histogram (Task 13's ledger watch item from
-# Task 9/11) -- it plays no role in outcome classification, resolution-truth,
-# or market identity. So the fix is the smallest one that keeps the study
-# runnable: null/missing/blank category defaults to "unknown" (a value
+# the results-config category histogram written by run_backtest.py -- it plays
+# no role in outcome classification, resolution-truth, or market identity.
+# So the fix is the smallest one that keeps the study runnable:
+# null/missing/blank category defaults to "unknown" (a value
 # already used as a fallback elsewhere in this module) instead of causing an
 # exclusion. "unknown" falls to fees.py's CATEGORY_RATES["_default"] rate
 # (0.05), identically to any other unrecognized category string -- no new
-# fee-lookup branch, no change to the pre-registered significance gate. See
-# task-13-report.md for the full live evidence.
+# fee-lookup branch, no change to the pre-registered significance gate. The
+# live walk described above is the evidence; re-run the same ascending
+# `/markets/keyset` sweep if Gamma ever starts populating `category` again.
 #
 # Real data also showed category strings with stray whitespace (e.g.
 # "Pop-Culture ", trailing space, verified live) that would silently miss a
@@ -169,7 +174,7 @@ def _row_to_record(row: dict) -> MarketRecord | Exclusion:
     mid = str(row.get(COLUMN_MAP["market_id"], "unknown"))
     for ours, theirs in COLUMN_MAP.items():
         if ours == "category":
-            continue  # see "Task 13 real-API discovery" note above -- null/missing -> "unknown", not excluded
+            continue  # see the category-nullness note above -- null/missing -> "unknown", not excluded
         if theirs not in row or pd.isna(row[theirs]):
             return Exclusion(market_id=mid, reason=f"missing_field:{ours}")
     closed = row[COLUMN_MAP["closed"]]
@@ -209,7 +214,7 @@ def _gamma_to_record(m: dict) -> MarketRecord | Exclusion:
     mid = str(m.get(COLUMN_MAP["market_id"], "unknown"))
     for ours, theirs in COLUMN_MAP.items():
         if ours == "category":
-            continue  # see "Task 13 real-API discovery" note above -- null/missing -> "unknown", not excluded
+            continue  # see the category-nullness note above -- null/missing -> "unknown", not excluded
         if m.get(theirs) in (None, ""):
             return Exclusion(market_id=mid, reason=f"missing_field:{ours}")
     if not m.get(COLUMN_MAP["closed"]):
@@ -246,8 +251,8 @@ def load_from_gamma(client: PolymarketClient, max_markets: int | None = None,
     # exposes -- as an optional study-window bound (see run_backtest.py's
     # main() for the concrete window and why it's needed: unbounded, this
     # pagination runs into the millions given the growth curve observed live
-    # during Task 13 -- single months hit 6,100+ markets by 2026, capped
-    # during measurement). Since endDate can drift from the market's *actual*
+    # -- single months hit 6,100+ markets by 2026, capped during
+    # measurement). Since endDate can drift from the market's *actual*
     # closedTime, matching records are additionally filtered client-side by
     # closedTime (the literal thing a "study window" means) -- drift cases
     # are excluded as "outside_study_window" rather than silently dropped

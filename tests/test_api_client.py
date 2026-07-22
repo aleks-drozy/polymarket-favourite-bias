@@ -115,7 +115,7 @@ def test_live_smoke_known_market():
 
 @pytest.mark.network
 def test_live_keyset_pagination_advances():
-    # Offset pagination hard-caps around offset~2000 (verified live, Task 13)
+    # Offset pagination hard-caps around offset~2000 (verified live)
     # -- this confirms the keyset cursor mechanism actually advances instead
     # of re-serving the same page (an easy mistake: passing back the wrong
     # param name silently no-ops and just returns page 1 again).

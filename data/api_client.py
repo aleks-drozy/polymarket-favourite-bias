@@ -50,8 +50,10 @@ class PolymarketClient:
     def get_market(self, condition_id: str) -> dict:
         # NOTE: the live Gamma API defaults `condition_ids` lookups to closed=false
         # (i.e. active markets only) and silently returns [] for any resolved market
-        # without an explicit closed=true. This project only ever looks up resolved
-        # markets, so closed=true is hardcoded here. See task-10-report.md.
+        # without an explicit closed=true (observed live). It returns no error in
+        # that case, so omitting the flag fails silently -- an empty result reads as
+        # "market not found" rather than "wrong query". This project only ever looks
+        # up resolved markets, so closed=true is hardcoded here.
         payload = self._get(f"{GAMMA}/markets?condition_ids={condition_id}&closed=true")
         return payload[0]
 
@@ -62,12 +64,12 @@ class PolymarketClient:
                              end_date_min: str | None = None,
                              end_date_max: str | None = None
                              ) -> tuple[list[dict], str | None]:
-        # NOTE (Task 13, live-verified): `fetch_markets_page`'s plain offset
+        # NOTE (live-verified): `fetch_markets_page`'s plain offset
         # pagination hard-caps around offset~2000 -- HTTP 422
         # {"error":"offset too large, use /markets/keyset for deeper
         # pagination"} starting somewhere in [2000, 2031] (binary-searched
         # live). That's nowhere near enough historical depth for this study
-        # (see data/dataset_loader.py's "Task 13 real-API discovery" note for why deep
+        # (see data/dataset_loader.py's category-nullness note for why deep
         # pagination matters here), so load_from_gamma uses this instead.
         # The request param is `after_cursor` -- found via the live
         # /openapi.json spec; the response's own cursor field is named
